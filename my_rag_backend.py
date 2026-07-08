@@ -29,12 +29,10 @@ def bootstrap_rag_system():
         print("❌ Error: NVIDIA_API_KEY is missing from your environment or Streamlit Secrets!")
         sys.exit(1)
 
-    # 🏢 FIX 1: Make the database path relative so it works on both your Mac and the Cloud
-    # This looks for a folder named 'chroma-data' inside your project folder
-    #db_path = os.path.join(os.path.dirname(__file__), "..", "chroma-data")
+   
+    db_path = os.path.join(os.path.dirname(__file__), "..", "chroma-data")
     
-    # If it's a flat structure, you might just need: 
-    db_path = os.path.join(os.path.dirname(__file__), "chroma.sqlite3")
+
     if not os.path.exists(db_path):
         print(f"❌ Error: Local database directory '{db_path}' not found.")
         print("Please verify the directory path or ensure it is deployed with your repository.")
