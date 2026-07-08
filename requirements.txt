@@ -1,6 +1,7 @@
 streamlit
 langchain
 langchain-core
+langchain-community
 langchain-nvidia-ai-endpoints
 python-dotenv
 chromadb
