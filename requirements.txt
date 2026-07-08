@@ -6,3 +6,5 @@ langchain-nvidia-ai-endpoints
 python-dotenv
 chromadb
 langchain-chroma
+pysqlite3-binary
+ddgs
