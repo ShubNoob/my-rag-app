@@ -2,13 +2,86 @@ import os
 import sys
 from dotenv import load_dotenv
 import chromadb
-
+import streamlit as st
 # LangChain & NVIDIA AI Foundation Endpoints
 from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings
 from langchain_chroma import Chroma
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
+
+@st.cache_resource
+def bootstrap_rag_system():
+    """
+    Initializes and caches the heavy-lifting RAG dependencies (LLM, Embeddings, DB, and Search).
+    This function executes only ONCE on server startup and shares resources across user actions.
+    """
+    # 1. Load your credentials from the .env file
+    load_dotenv()
+    
+    # Adapt API key lookup for both local environment and Streamlit Cloud secrets
+    if "NVIDIA_API_KEY" in os.environ:
+        api_key = os.environ["NVIDIA_API_KEY"]
+    elif "NVIDIA_API_KEY" in st.secrets:
+        api_key = st.secrets["NVIDIA_API_KEY"]
+    else:
+        print("❌ Error: NVIDIA_API_KEY is missing from your environment or Streamlit Secrets!")
+        sys.exit(1)
+
+    # 2. Verify that your local database actually exists (if running locally)
+    # Note: On Streamlit Cloud, ensure your 'chroma-data' directory is committed or accessible.
+    db_path = "/Users/hpffilms/Desktop/OOLKA_TAKE_3/chroma-data"
+    if not os.path.exists(db_path):
+        print(f"❌ Error: Local database directory '{db_path}' not found.")
+        print("Please verify the directory path or ensure it is deployed with your repository.")
+        sys.exit(1)
+
+    print("🤖 [CACHE OVERHEAD] Bootstrapping NVIDIA models and local vector engine...")
+    
+    # 3. Initialize the NVIDIA embedding engine
+    embeddings = NVIDIAEmbeddings(model="nvidia/nv-embed-v1", nvidia_api_key=api_key)
+    
+    # 4. Initialize the Nemotron-3 LLM with reasoning (thinking mode) enabled
+    llm = ChatNVIDIA(
+        model="nvidia/nemotron-3-super-120b-a12b",
+        nvidia_api_key=api_key,
+        timeout=60,
+        temperature=0.6,               
+        top_p=0.95,
+        max_completion_tokens=16384,               
+        reasoning_budget=4096,
+        chat_template_kwargs={"enable_thinking": True},
+    )
+    
+    # 5. Connect to the local ChromaDB store
+    chroma_client = chromadb.PersistentClient(path=db_path)
+    vector_store = Chroma(
+        client=chroma_client,
+        collection_name="script_knowledge_base",
+        embedding_function=embeddings,
+    )
+    
+    # Create the retriever object to pull the top 15 closest matching context blocks
+    retriever = vector_store.as_retriever(search_kwargs={"k": 15})
+    
+    # 6. Initialize the web search fallback tool
+    web_search = DuckDuckGoSearchRun()
+    
+    # Return everything as a dictionary resource to be cached
+    return {
+        "retriever": retriever,
+        "llm": llm,
+        "web_search": web_search
+    }
+
+# Global initialization: Streamlit intercepts this call after the 1st run 
+# and returns the cached objects immediately.
+rag_resources = bootstrap_rag_system()
+
+
+
+
 
 def generate_script_from_rag(user_query: str):
     # 1. Load your credentials from the .env file
