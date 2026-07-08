@@ -3,6 +3,7 @@ import sys
 from dotenv import load_dotenv
 import chromadb
 import streamlit as st
+
 # LangChain & NVIDIA AI Foundation Endpoints
 from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings
 from langchain_chroma import Chroma
@@ -15,7 +16,7 @@ from langchain_core.output_parsers import StrOutputParser
 def bootstrap_rag_system():
     """
     Initializes and caches the heavy-lifting RAG dependencies (LLM, Embeddings, DB, and Search).
-    This function executes only ONCE on server startup and shares resources across user actions.
+    This function executes only ONCE when needed and shares resources across user actions.
     """
     # 1. Load your credentials from the .env file
     load_dotenv()
@@ -29,9 +30,8 @@ def bootstrap_rag_system():
         print("❌ Error: NVIDIA_API_KEY is missing from your environment or Streamlit Secrets!")
         sys.exit(1)
 
-   
-    db_path = os.path.join(os.path.dirname(__file__), "..", "chroma-data")
-    
+    # 2. Setup Relative Cloud-Safe Database Path
+    db_path = os.path.join(os.path.dirname(__file__), "chroma-data")
 
     if not os.path.exists(db_path):
         print(f"❌ Error: Local database directory '{db_path}' not found.")
@@ -43,16 +43,14 @@ def bootstrap_rag_system():
     # 3. Initialize the NVIDIA embedding engine
     embeddings = NVIDIAEmbeddings(model="nvidia/nv-embed-v1", nvidia_api_key=api_key)
     
-    # 4. Initialize the Nemotron-3 LLM with reasoning (thinking mode) enabled
+    # 4. Initialize a live, supported NVIDIA LLM endpoint
     llm = ChatNVIDIA(
-        model="nvidia/nemotron-3-super-120b-a12b",
+        model="meta/llama-3.1-70b-instruct",  # Updated from deprecated nemotron-3 to live model
         nvidia_api_key=api_key,
         timeout=60,
-        temperature=0.6,               
+        temperature=0.6,                
         top_p=0.95,
-        max_completion_tokens=16384,               
-        reasoning_budget=4096,
-        chat_template_kwargs={"enable_thinking": True},
+        max_completion_tokens=16384,                
     )
     
     # 5. Connect to the local ChromaDB store
@@ -76,55 +74,19 @@ def bootstrap_rag_system():
         "web_search": web_search
     }
 
-# Global initialization: Streamlit intercepts this call after the 1st run 
-# and returns the cached objects immediately.
-rag_resources = bootstrap_rag_system()
-
 
 def generate_script_from_rag(user_query: str):
-    # 1. Load your credentials from the .env file
-    load_dotenv()
-    if not os.getenv("NVIDIA_API_KEY"):
-        print("❌ Error: NVIDIA_API_KEY is missing from your .env file!")
-        sys.exit(1)
+    """
+    Main runner function. Extracts tools from the global cache resource
+    to prevent blocking the UI startup phase.
+    """
+    # Pull resources from the cache securely inside the function call
+    rag_resources = bootstrap_rag_system()
+    retriever = rag_resources["retriever"]
+    llm = rag_resources["llm"]
+    web_search = rag_resources["web_search"]
 
-    # 2. Verify that your local database actually exists
-    if not os.path.exists("/Users/hpffilms/Desktop/OOLKA_TAKE_3/chroma-data"):
-        print("❌ Error: Local database directory './chroma-data' not found.")
-        print("Please make sure you have run your 'ingest_data.py' script first.")
-        sys.exit(1)
-
-    print("🤖 Bootstrapping NVIDIA models and local vector engine...")
-    
-    # 3. Initialize the NVIDIA embedding engine (must match the ingestion model)
-    embeddings = NVIDIAEmbeddings(model="nvidia/nv-embed-v1")
-    
-    # 4. Initialize the Nemotron-3 LLM with reasoning (thinking mode) enabled
-    llm = ChatNVIDIA(
-        model="nvidia/nemotron-3-super-120b-a12b",
-        timeout=60,
-        temperature=0.6,               # Slightly lowered for more structural consistency
-        top_p=0.95,
-        max_completion_tokens=16384,               
-        reasoning_budget=4096,
-        chat_template_kwargs={"enable_thinking": True},
-    )
-    
-    # 5. Connect to the local ChromaDB store
-    chroma_client = chromadb.PersistentClient(path="/Users/hpffilms/Desktop/OOLKA_TAKE_3/chroma-data")
-    vector_store = Chroma(
-        client=chroma_client,
-        collection_name="script_knowledge_base",
-        embedding_function=embeddings,
-    )
-    
-    # Create the retriever object to pull the top 3 closest matching context blocks
-    retriever = vector_store.as_retriever(search_kwargs={"k": 15})
-    
-    # 6. Initialize an optional web search fallback tool for live trends
-    web_search = DuckDuckGoSearchRun()
-
-    # 7. Step A: Perform the semantic search to gather internal documents
+    # 1. Perform the semantic search to gather internal documents
     print(f"🔍 [STEP 1/3] Retrieving matching chunks for: \"{user_query}\"")
     retrieved_docs = retriever.invoke(user_query)
     
@@ -133,10 +95,9 @@ def generate_script_from_rag(user_query: str):
         internal_context = "No specific internal company guidelines or historical scripts matched this exact query."
     else:
         print(f"✅ Found {len(retrieved_docs)} relevant context chunks.")
-        # Flatten the text chunks into a readable text block for the LLM prompt
         internal_context = "\n---\n".join([doc.page_content.strip() for doc in retrieved_docs])
 
-    # 8. Step B: Perform web search to gather live hooks and trend analysis
+    # 2. Perform web search to gather live hooks and trend analysis
     print("🌐 [STEP 2/3] Fetching live internet trends via DuckDuckGo...")
     search_query = f"most engaging video ideas for {user_query}"
     try:
@@ -145,8 +106,7 @@ def generate_script_from_rag(user_query: str):
         print(f"⚠️ Web search timed out or failed ({e}). Defaulting to database context only.")
         web_context = "No external live trends available at this moment."
 
-    # 9. Step C: Build the Master Prompt Template
-    # This guides the model to reason precisely across your data and output a predictable format.
+    # 3. Build the Master Prompt Template
     template = """You are an elite scriptwriter who specializes in high-retention verbal storytelling. Your core objective is to write incredibly engaging text and dialogues. 
     
     Minimize deep focus on visual execution, complex SFX, or BGM. Instead, maximize your focus on the verbal delivery, rhythm, emotional texture of the dialogue, and conversational phrasing.
@@ -194,11 +154,10 @@ def generate_script_from_rag(user_query: str):
     
     prompt_template = ChatPromptTemplate.from_template(template)
 
-    # 10. Assemble the complete LangChain pipeline (Prompt -> LLM -> String Output Parser)
+    # 4. Assemble the complete LangChain pipeline
     chain = prompt_template | llm | StrOutputParser()
     
-    print("🧠 [STEP 3/3] Assembling context. Calling Nemotron-3 reasoning engine...")
-    print("Please wait while the model evaluates the best approach...")
+    print("🧠 [STEP 3/3] Assembling context. Calling NVIDIA reasoning engine...")
     print("-" * 60)
 
     # Execute the chain
@@ -210,16 +169,15 @@ def generate_script_from_rag(user_query: str):
     
     return final_script
 
+
 if __name__ == "__main__":
     print("==================================================")
     print("🎬 Welcome to the RAG Script Generation Pipeline!")
     print("==================================================\n")
     
-    # Input your script target prompt directly here
     target_prompt = "lets write a skit based oolka script where the setting is front of temple and there are 2 chareceters one is beggar and one is a buswiness man and the beggar teaches about his regret to the business man and tells him to use oolka before its too late"
     script_output = generate_script_from_rag(target_prompt)
     
     print("\n================= GENERATED SCRIPT =================")
     print(script_output)
     print("====================================================")
-
