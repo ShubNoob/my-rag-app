@@ -2,9 +2,10 @@ streamlit
 langchain
 langchain-core
 langchain-community
-langchain-nvidia-ai-endpoints
 python-dotenv
 chromadb
 langchain-chroma
 pysqlite3-binary
 ddgs
+langchain-nvidia-ai-endpoints
+langchain-anthropic
