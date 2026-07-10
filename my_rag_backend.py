@@ -53,7 +53,7 @@ def bootstrap_rag_system():
     
     # 5. Initialize Claude LLM Endpoint
     llm = ChatAnthropic(
-        model="claude-3-5-sonnet-latest",  
+        model="claude-3-5-sonnet-20241022",  
         anthropic_api_key=anthropic_key,
         temperature=0.6,                
         max_tokens=8192,                
